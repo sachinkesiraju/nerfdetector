@@ -238,10 +238,9 @@ export async function runInit() {
   console.log("");
 
   console.log(chalk.bold("  what gets sent when you report:"));
-  console.log(chalk.white("    ✓ model names (e.g. claude-opus-4-6)"));
-  console.log(chalk.white("    ✓ call counts"));
-  console.log(chalk.white("    ✓ error counts and status codes"));
-  console.log(chalk.white("    ✓ tool success/failure counts"));
+  console.log(chalk.white("    ✓ which models you used"));
+  console.log(chalk.white("    ✓ how many actions succeeded or failed"));
+  console.log(chalk.white("    ✓ how often the model retried"));
   console.log("");
   console.log(chalk.bold("  what never gets sent:"));
   console.log(chalk.red("    ✗ prompts or responses"));

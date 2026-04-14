@@ -117,6 +117,13 @@ program
       }
     }
 
+    // Store vote locally for history
+    const primaryModel = Object.entries(context.attribution).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (primaryModel) {
+      const { insertEvent } = await import("./store/db.js");
+      insertEvent("local", primaryModel, "vote", { status: String(direction) });
+    }
+
     const result = await submitVote(direction, context);
 
     if (result.ok) {
@@ -127,6 +134,16 @@ program
       console.log(chalk.red(`  ✗ ${result.error}`));
     }
     console.log("");
+  });
+
+// History — personal trends
+program
+  .command("history")
+  .description("show your personal session trends")
+  .option("--days <n>", "days of history to show", "7")
+  .action(async (opts) => {
+    const { printHistory } = await import("./history.js");
+    printHistory(parseInt(opts.days, 10) || 7);
   });
 
 // Export local events for privacy auditing
@@ -148,7 +165,7 @@ program
     console.log(JSON.stringify(events, null, 2));
     console.error("");
     console.error(chalk.gray(`  ${events.length} events exported (last ${hours}h)`));
-    console.error(chalk.gray("  fields: id, ts, tool, model, event_type, duration_ms, status, tool_ok"));
+    console.error(chalk.gray("  fields: id, ts, tool, model, event_type, duration_ms, status, tool_ok, tool_name, response_size, session_id"));
     console.error(chalk.gray("  no prompts, responses, file paths, or code — metadata only"));
     console.error("");
   });
