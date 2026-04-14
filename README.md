@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/nerfdetector)](https://www.npmjs.com/package/nerfdetector)
 
-Crowdsourced real-time model performance. Is your model nerfed?
+nerfdetector monitors real-time model performance. Is your model nerfed?
 
 When Claude, GPT, Gemini, or Grok is having a bad day, you shouldn't have to wonder if it's just you. nerfdetector watches your AI coding sessions and lets you report how it's going — one keypress at the end of every session.
 
@@ -10,10 +10,10 @@ When Claude, GPT, Gemini, or Grok is having a bad day, you shouldn't have to won
 
 ```
 npm i -g nerfdetector
-nerfdetector init
+nerfdetector
 ```
 
-`init` detects your AI coding tools (Claude Code, Codex CLI, Gemini CLI), installs lightweight hooks, and prints exactly what data it will and won't collect.
+`nerfdetector` detects your AI coding tools (Claude Code, Codex CLI, Gemini CLI) and installs lightweight hooks. The install process explains exactly what data it will and will not collect.
 
 ## How it works
 
@@ -38,7 +38,7 @@ how was your session? [f] fine  [m] mid  [n] nerfed  [s] skip
 - **n** — sends your vote as "nerfed"
 - **s** or wait 5 seconds — skips vote, sends anonymous telemetry
 
-Your vote is weighted by which models you actually used — if you used Opus and Sonnet in the same session, the vote counts proportionally against each. No picking from a dropdown.
+Your vote is weighted by which models you actually used — if you used Opus and Sonnet in the same session, the vote counts proportionally against each. 
 
 ## Commands
 
@@ -53,7 +53,7 @@ nerfdetector export       dump local events as JSON (privacy audit)
 nerfdetector uninstall    remove all hooks
 ```
 
-## What it detects
+## What it tracks
 
 nerfdetector tracks quality signals from your sessions and builds a personal baseline over time:
 
@@ -61,14 +61,10 @@ nerfdetector tracks quality signals from your sessions and builds a personal bas
 - **Retry loops** — consecutive same-tool calls (model stuck in a loop)
 - **Latency** — time between actions (is the model getting slower?)
 
-When a session deviates significantly from your norm, you'll see a private alert before the vote prompt.
-
-## Your personal history
+To check if a session deviates significantly from your norm, you can run `nerfdetector history` to view a summary of your usage.
 
 ```
 $ nerfdetector history
-
-  your history · last 7 days
 
   claude-opus-4-6 · 154 actions
 
@@ -84,17 +80,15 @@ $ nerfdetector history
 ▼ Apr 10  ██████████░░░░░░  67%        31      26%   🔴 nerfed
 ▼ Apr 11  █████████░░░░░░░  60%        15      33%   🔴 nerfed
   Apr 12  ██████████████░░  91%        22       5%   🟢 fine
-  Apr 13  █████████████░░░  84%        19      11%   🟡 mid
 ▲ Apr 14  ███████████████░  92%        25       4%   🟢 fine
 
   insights · 12 voted sessions
   • 4.9× more retries when you vote nerfed vs fine
-  • nerfed votes correlate 82% with short responses (< 1200 chars)
   • 73% of your evening sessions end with nerfed
   • your baseline shifted -18% since Apr 10
 ```
 
-Everything stays local. Baselines never leave your machine.
+Baselines and history never leave your machine.
 
 ## What gets collected
 
