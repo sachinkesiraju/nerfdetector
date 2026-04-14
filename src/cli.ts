@@ -60,6 +60,7 @@ program
   .command("report")
   .description("report how your current session is going")
   .option("--fine", "report as working well")
+  .option("--mid", "report as mediocre")
   .option("--nerfed", "report as nerfed")
   .action(async (opts) => {
     const context = computeAttribution();
@@ -72,7 +73,6 @@ program
       process.exit(0);
     }
 
-    // Show what we're about to report
     const entries = Object.entries(context.attribution)
       .sort((a, b) => b[1] - a[1])
       .map(([m, w]) => `${m} (${Math.round(w * 100)}%)`)
@@ -85,34 +85,32 @@ program
     console.log(`  ${entries}`);
     console.log(chalk.gray(
       `  ${meta.callCount} calls · ${meta.errorCount} errors` +
-      (meta.avgLatencyMs ? ` · avg ${(meta.avgLatencyMs / 1000).toFixed(1)}s/call` : "") +
       (meta.toolFailCount ? ` · ${meta.toolFailCount} tool fails` : "")
     ));
     console.log("");
 
-    // Determine direction
-    let direction: 1 | -1;
+    let direction: 1 | 0 | -1;
 
     if (opts.fine) {
       direction = 1;
+    } else if (opts.mid) {
+      direction = 0;
     } else if (opts.nerfed) {
       direction = -1;
     } else {
-      // Interactive: ask
       const readline = await import("node:readline");
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const answer = await new Promise<string>((resolve) => {
-        rl.question(chalk.white("  how was it? ") + chalk.green("[f]") + " fine  " + chalk.red("[n]") + " nerfed  ", (a) => {
+        rl.question(chalk.white("  how was it? ") + chalk.green("[f]") + " fine  " + chalk.yellow("[m]") + " mid  " + chalk.red("[n]") + " nerfed  ", (a) => {
           rl.close();
           resolve(a.trim().toLowerCase());
         });
       });
 
-      if (answer === "f" || answer === "fine") {
-        direction = 1;
-      } else if (answer === "n" || answer === "nerfed") {
-        direction = -1;
-      } else {
+      if (answer === "f" || answer === "fine") direction = 1;
+      else if (answer === "m" || answer === "mid") direction = 0;
+      else if (answer === "n" || answer === "nerfed") direction = -1;
+      else {
         console.log(chalk.gray("  skipped"));
         console.log("");
         process.exit(0);
@@ -122,7 +120,7 @@ program
     const result = await submitVote(direction, context);
 
     if (result.ok) {
-      const label = direction === 1 ? chalk.green("fine") : chalk.red("nerfed");
+      const label = direction === 1 ? chalk.green("fine") : direction === 0 ? chalk.yellow("mid") : chalk.red("nerfed");
       console.log(`  ${chalk.green("✓")} reported as ${label}`);
       console.log(chalk.gray("  live at nerfdetector.com"));
     } else {

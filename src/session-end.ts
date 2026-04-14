@@ -3,7 +3,8 @@ import { readFileSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { ReadStream } from "node:tty";
 import { join } from "node:path";
 import { getRecentEvents, getDataDir } from "./store/db.js";
-import { computeAttribution, submitVote } from "./vote.js";
+import { computeAttribution, submitVote, getApiBase } from "./vote.js";
+import { getDeviceId } from "./device.js";
 
 const MIN_ACTIONS = 5;
 const COOLDOWN_MS = 15 * 60 * 1000;
@@ -60,25 +61,38 @@ export async function handleSessionEnd() {
 
   console.log("");
   console.log(chalk.gray(`  nerfdetector · ${entries} · ${statsStr}`));
-  process.stdout.write(chalk.gray("  how was your session? ") + chalk.green("[f]") + " fine  " + chalk.red("[n]") + " nerfed  " + chalk.gray("[s]") + " skip  ");
+  process.stdout.write(chalk.gray("  how was your session? ") + chalk.green("[f]") + " fine  " + chalk.yellow("[m]") + " mid  " + chalk.red("[n]") + " nerfed  " + chalk.gray("[s]") + " skip  ");
 
-  const key = await readKeyFromTty(10000);
+  const key = await readKeyFromTty(5000);
 
-  if (key === "n") {
+  if (key === "f" || key === "m" || key === "n") {
+    const direction = key === "f" ? 1 : key === "m" ? 0 : -1;
+    const label = key === "f" ? chalk.green("✓ fine") : key === "m" ? chalk.yellow("✓ mid") : chalk.red("✓ nerfed");
     setLastPromptedAt();
     try {
-      const result = await submitVote(-1, context);
-      console.log(result.ok ? chalk.red("✓ nerfed") : chalk.red(`✗ ${result.error}`));
-    } catch { console.log(chalk.red("✗ network error")); }
-  } else if (key === "f") {
-    setLastPromptedAt();
-    try {
-      const result = await submitVote(1, context);
-      console.log(result.ok ? chalk.green("✓ fine") : chalk.red(`✗ ${result.error}`));
+      const result = await submitVote(direction as 1 | 0 | -1, context);
+      console.log(result.ok ? label : chalk.red(`✗ ${result.error}`));
     } catch { console.log(chalk.red("✗ network error")); }
   } else {
-    // Skip or timeout — don't consume cooldown, don't send anything
+    // Skip or timeout — consume cooldown so we don't re-prompt immediately
+    setLastPromptedAt();
     console.log(chalk.gray("skipped"));
+    const meta = context.sessionMeta;
+    const errorRate = meta.callCount > 0 ? meta.errorCount / meta.callCount : 0;
+    const toolFailRate = totalActions > 0 ? failed / totalActions : 0;
+    const healthy = errorRate < 0.05 && toolFailRate < 0.1;
+    const oldestTs = events.length > 0 ? events[events.length - 1].ts : Date.now();
+    const durationS = Math.max(1, Math.round((Date.now() - oldestTs) / 1000));
+    try {
+      await fetch(`${getApiBase()}/api/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attribution: context.attribution, healthy, callCount: meta.callCount,
+          errorRate, toolFailRate, durationS, deviceId: getDeviceId(),
+        }),
+      });
+    } catch {}
   }
 
   console.log("");

@@ -1,11 +1,17 @@
-import { insertEvent } from "./store/db.js";
-import { normalizeModelId } from "./models.js";
+import chalk from "chalk";
+import { insertEvent, getRecentEvents } from "./store/db.js";
+import { normalizeModelId, type StatusTier } from "./models.js";
+import { fetchGlobalStatus } from "./vote.js";
 
-const MAX_INPUT_SIZE = 65536; // 64KB
+const MAX_INPUT_SIZE = 65536;
 const STDIN_TIMEOUT_MS = 5000;
+const SESSION_GAP_MS = 10 * 60 * 1000; // 10 min gap = new session
+
+function tierEmoji(tier: StatusTier): string {
+  return tier === "fine" ? "🟢" : tier === "nerfed" ? "🔴" : "🟡";
+}
 
 export async function ingest(tool: string) {
-  // Read stdin with a timeout — hooks should send finite data then close
   const input = await readStdin();
   if (!input.trim()) return;
 
@@ -13,10 +19,18 @@ export async function ingest(tool: string) {
     const data = JSON.parse(input);
     const hookEvent = data.hook_event_name;
 
-    const raw = data.model || data.modelId || process.env.CLAUDE_MODEL || "unknown";
+    const raw = data.model || data.modelId || process.env.CLAUDE_MODEL || "";
+    if (!raw) return; // no model identified — skip silently
     const model = normalizeModelId(raw);
 
     if (hookEvent === "UserPromptSubmit") {
+      // Check if this is the start of a new session (gap in activity)
+      const recent = getRecentEvents(SESSION_GAP_MS);
+      if (recent.length === 0) {
+        // New session — show model status
+        showSessionStartStatus(model).catch(() => {});
+      }
+
       insertEvent(tool, model, "prompt", undefined, "ok", undefined);
       return;
     }
@@ -36,6 +50,30 @@ export async function ingest(tool: string) {
     insertEvent(tool, model, eventType, durationMs, status, toolOk);
   } catch {
     // Silent — never crash on bad data from hooks
+  }
+}
+
+async function showSessionStartStatus(model: string) {
+  try {
+    // 2s timeout — fetchGlobalStatus catches its own errors
+    const data = await Promise.race([
+      fetchGlobalStatus(),
+      new Promise<null>((r) => setTimeout(() => r(null), 2000)),
+    ]);
+    if (!data?.models) return;
+
+    const m = data.models.find((x) => x.modelId === model);
+    if (!m) return;
+
+    const total = m.voteCount + m.sessionCount;
+    if (total === 0) {
+      console.log(chalk.gray(`  nerfdetector · ${m.displayName}: ⚪ no data yet`));
+    } else {
+      const pct = m.sentimentScore !== null ? `${Math.round(m.sentimentScore * 100)}% sentiment` : "";
+      console.log(chalk.gray(`  nerfdetector · ${m.displayName}: ${tierEmoji(m.tier)} ${pct} · ${total} reports`));
+    }
+  } catch {
+    // Silent — never block the user
   }
 }
 

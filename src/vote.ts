@@ -2,7 +2,7 @@ import { getRecentEvents, type EventRow } from "./store/db.js";
 import { getDeviceId } from "./device.js";
 import { normalizeModelId } from "./models.js";
 
-function getApiBase(): string {
+export function getApiBase(): string {
   const envApi = process.env.NERFDETECTOR_API;
   if (!envApi) return "https://nerfdetector.com";
   if (envApi.startsWith("https://") || envApi.startsWith("http://localhost") || envApi.startsWith("http://127.0.0.1")) return envApi;
@@ -16,7 +16,7 @@ interface Attribution {
 interface SessionMeta {
   callCount: number;
   errorCount: number;
-  avgLatencyMs?: number;
+  p95LatencyMs?: number;
   toolFailCount?: number;
 }
 
@@ -56,6 +56,7 @@ export function computeAttribution(events?: EventRow[]): VoteContext {
 
   const attribution: Attribution = {};
   for (const [model, dur] of modelDuration) {
+    if (model === "unknown") continue; // skip unidentified models
     const weight = dur / totalDuration;
     if (weight >= 0.02) attribution[model] = Math.round(weight * 100) / 100;
   }
@@ -76,14 +77,14 @@ export function computeAttribution(events?: EventRow[]): VoteContext {
     sessionMeta: {
       callCount: recentEvents.length,
       errorCount,
-      avgLatencyMs: avgLatency,
+      p95LatencyMs: avgLatency,
       toolFailCount,
     },
     hasEvents: true,
   };
 }
 
-export async function submitVote(direction: 1 | -1, context?: VoteContext): Promise<{ ok: boolean; error?: string }> {
+export async function submitVote(direction: 1 | 0 | -1, context?: VoteContext): Promise<{ ok: boolean; error?: string }> {
   const ctx = context ?? computeAttribution();
 
   if (!ctx.hasEvents || Object.keys(ctx.attribution).length === 0) {

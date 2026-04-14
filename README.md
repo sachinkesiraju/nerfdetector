@@ -1,5 +1,7 @@
 # nerfdetector
 
+[![npm](https://img.shields.io/npm/v/nerfdetector)](https://www.npmjs.com/package/nerfdetector)
+
 Crowdsourced real-time model performance. Is your model nerfed?
 
 When Claude, GPT, Gemini, or Grok is having a bad day, you shouldn't have to wonder if it's just you. nerfdetector watches your AI coding sessions and lets you report how it's going — one keypress at the end of every session.
@@ -29,7 +31,7 @@ how was your session? [f] fine  [n] nerfed  [s] skip
 - **n** — sends your vote as "nerfed"
 - **s** or wait 10 seconds — nothing is sent
 
-Your vote is weighted by which models you actually used — if you used 70% Opus and 30% GPT, the vote counts proportionally. No picking from a dropdown.
+Your vote is weighted by which models you actually used — if you used Opus and Sonnet in the same session, the vote counts proportionally against each. No picking from a dropdown.
 
 ## Commands
 
