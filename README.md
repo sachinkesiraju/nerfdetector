@@ -102,7 +102,7 @@ Baselines and history never leave your machine.
 - File paths or code
 - Error messages or tool output content
 - Personally identifying information
-- Your personal baselines (these never leave your machine)
+- Your personal baselines
 
 All events are stored locally in `~/.nerfdetector/events.db`. Run `nerfdetector export` anytime to verify.
 

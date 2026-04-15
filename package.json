@@ -1,6 +1,6 @@
 {
   "name": "nerfdetector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Crowdsourced real-time model performance. Is your model nerfed?",
   "type": "module",
   "bin": {
