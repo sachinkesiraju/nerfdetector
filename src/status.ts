@@ -59,7 +59,7 @@ export async function printStatus() {
 
   for (const m of sorted) {
     const emoji = tierEmoji(m.tier);
-    const name = m.displayName.slice(0, 14).padEnd(14);
+    const name = m.displayName.slice(0, 20).padEnd(20);
     const sent = pct(m.sentimentScore).padStart(4);
     const health = pct(m.healthScore).padStart(4);
     const sessions = String(m.voteCount + m.sessionCount).padStart(4);
