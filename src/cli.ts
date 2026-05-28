@@ -6,13 +6,24 @@ import { computeAttribution, submitVote } from "./vote.js";
 import { printStatus } from "./status.js";
 import { ingest } from "./ingest.js";
 import { getRecentEvents } from "./store/db.js";
+import { catchUpCursors } from "./ingest/backfill.js";
+import { logDebug } from "./log.js";
 
 const program = new Command();
+
+/**
+ * Quietly catch up JSONL cursors before commands that read from the DB.
+ * Hooks (`_ingest`, `_session-end`) should NOT call this — they're already
+ * the live capture path and adding catch-up there would slow every tool call.
+ */
+function lazyCatchUp() {
+  try { catchUpCursors({ quiet: true }); } catch {}
+}
 
 program
   .name("nerfdetector")
   .description("is your model nerfed? monitor crowdsourced real-time model performance.")
-  .version("0.1.0");
+  .version("0.2.0");
 
 // Default: run init
 program
@@ -52,7 +63,50 @@ program
   .command("status")
   .description("show your session + global model status")
   .action(async () => {
+    lazyCatchUp();
     await printStatus();
+  });
+
+// Internal: backfill command (spawned detached by `init`)
+program
+  .command("_backfill", { hidden: true })
+  .option("--days <n>", "days of history to scan", "7")
+  .action((opts) => {
+    const days = parseInt(opts.days, 10) || 7;
+    try {
+      const stats = catchUpCursors({ sinceDays: days, quiet: true });
+      logDebug("backfill", "init backfill complete", stats as any);
+    } catch {}
+  });
+
+// Doctor — self-check: hooks installed, events flowing, log permissions
+program
+  .command("doctor")
+  .description("verify nerfdetector is capturing events correctly")
+  .action(async () => {
+    lazyCatchUp();
+    const { runDoctor } = await import("./doctor.js");
+    runDoctor();
+  });
+
+// Inspect — print current session's fingerprint without voting
+program
+  .command("inspect")
+  .description("preview the fingerprint that would be sent on vote")
+  .action(async () => {
+    lazyCatchUp();
+    const { runInspect } = await import("./inspect.js");
+    runInspect();
+  });
+
+// Compare — scorecard diff between two sessions
+program
+  .command("compare <sessionA> <sessionB>")
+  .description("compare two sessions side-by-side (id prefixes work)")
+  .action(async (a: string, b: string) => {
+    lazyCatchUp();
+    const { runCompare } = await import("./compare.js");
+    runCompare(a, b);
   });
 
 // Report — one-shot vote with direction prompt
@@ -63,6 +117,7 @@ program
   .option("--mid", "report as mediocre")
   .option("--nerfed", "report as nerfed")
   .action(async (opts) => {
+    lazyCatchUp();
     const context = computeAttribution();
 
     if (!context.hasEvents) {
@@ -117,14 +172,39 @@ program
       }
     }
 
+    // Compute fingerprint + consent gate (same flow as session-end)
+    const { buildFingerprint, fingerprintConsent, recordFingerprintConsent } = await import("./fingerprint.js");
+    const fp = buildFingerprint();
+    const consent = fingerprintConsent();
+    let sendFp: import("./analysis/score.js").Fingerprint | null = null;
+    if (consent === "send") {
+      sendFp = fp;
+    } else if (consent === "ask") {
+      console.log("");
+      console.log(chalk.gray("  one-time confirmation — your vote will attach this evidence:"));
+      console.log("");
+      for (const ln of JSON.stringify(fp, null, 2).split("\n")) console.log(chalk.gray("  " + ln));
+      console.log("");
+      const readline2 = await import("node:readline");
+      const rl2 = readline2.createInterface({ input: process.stdin, output: process.stdout });
+      const ans = await new Promise<string>((res) => {
+        rl2.question(chalk.gray("  send fingerprint with this and future votes? ") + chalk.green("[y]") + " yes  " + chalk.gray("[s]") + " skip  ", (a) => { rl2.close(); res(a.trim().toLowerCase()); });
+      });
+      if (ans === "y" || ans === "yes") { sendFp = fp; recordFingerprintConsent("send"); }
+      else { recordFingerprintConsent("skip"); }
+    }
+
     // Store vote locally for history
     const primaryModel = Object.entries(context.attribution).sort((a, b) => b[1] - a[1])[0]?.[0];
     if (primaryModel) {
       const { insertEvent } = await import("./store/db.js");
-      insertEvent("local", primaryModel, "vote", { status: String(direction) });
+      insertEvent("local", primaryModel, "vote", {
+        status: String(direction),
+        fingerprint: sendFp ? JSON.stringify(sendFp) : undefined,
+      });
     }
 
-    const result = await submitVote(direction, context);
+    const result = await submitVote(direction, context, sendFp);
 
     if (result.ok) {
       const label = direction === 1 ? chalk.green("fine") : direction === 0 ? chalk.yellow("mid") : chalk.red("nerfed");
@@ -141,9 +221,15 @@ program
   .command("history")
   .description("show your personal session trends")
   .option("--days <n>", "days of history to show", "7")
+  .option("--session <id>", "drill into one session (full or short id prefix)")
   .action(async (opts) => {
-    const { printHistory } = await import("./history.js");
-    printHistory(parseInt(opts.days, 10) || 7);
+    lazyCatchUp();
+    const { printHistory, printSessionDetail } = await import("./history.js");
+    if (opts.session) {
+      printSessionDetail(opts.session);
+    } else {
+      printHistory(parseInt(opts.days, 10) || 7);
+    }
   });
 
 // Export local events for privacy auditing
@@ -162,10 +248,18 @@ program
       return;
     }
 
-    console.log(JSON.stringify(events, null, 2));
+    // Pretty-print fingerprint JSON if present
+    const projected = events.map((e) => {
+      if (e.fingerprint) {
+        try { return { ...e, fingerprint: JSON.parse(e.fingerprint) }; } catch {}
+      }
+      return e;
+    });
+    console.log(JSON.stringify(projected, null, 2));
     console.error("");
     console.error(chalk.gray(`  ${events.length} events exported (last ${hours}h)`));
-    console.error(chalk.gray("  fields: id, ts, tool, model, event_type, duration_ms, status, tool_ok, tool_name, response_size, session_id"));
+    console.error(chalk.gray("  fields: id, ts, tool, model, event_type, duration_ms, status, tool_ok,"));
+    console.error(chalk.gray("          tool_name, response_size, session_id, source, source_offset, fingerprint"));
     console.error(chalk.gray("  no prompts, responses, file paths, or code — metadata only"));
     console.error("");
   });

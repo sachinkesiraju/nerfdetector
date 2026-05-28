@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { getDataDir } from "./store/db.js";
 import { getDeviceId } from "./device.js";
+import { spawnBackfill } from "./ingest/backfill.js";
 
 const HOME = homedir();
 
@@ -193,6 +194,20 @@ const TOOLS: Tool[] = [
 
 // ── Commands ────────────────────────────────────────────────────
 
+function parseBackfillFlag(): number {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--no-backfill")) return 0;
+  const idx = argv.findIndex((a) => a === "--backfill");
+  if (idx >= 0 && idx + 1 < argv.length) {
+    const m = argv[idx + 1].match(/^(\d+)([dh]?)$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      return m[2] === "h" ? Math.max(1, Math.round(n / 24)) : n;
+    }
+  }
+  return 7;
+}
+
 export async function runInit() {
   console.log("");
   console.log(chalk.bold("  nerfdetector init"));
@@ -237,10 +252,22 @@ export async function runInit() {
   console.log(chalk.gray(`  data dir:  ${dataDir}`));
   console.log("");
 
+  // Kick async backfill of recent transcripts (non-blocking).
+  // No-op if user passed --no-backfill upstream; default 7 days.
+  const backfillDays = parseBackfillFlag();
+  if (backfillDays > 0) {
+    try {
+      spawnBackfill(backfillDays);
+      console.log(chalk.gray(`  backfilling ${backfillDays} days of history in the background...`));
+      console.log("");
+    } catch {}
+  }
+
   console.log(chalk.bold("  what gets sent when you report:"));
   console.log(chalk.white("    ✓ which models you used"));
   console.log(chalk.white("    ✓ how many actions succeeded or failed"));
   console.log(chalk.white("    ✓ how often the model retried"));
+  console.log(chalk.white("    ✓ session fingerprint (loops, retries, tool failures) — you'll be asked first"));
   console.log("");
   console.log(chalk.bold("  what never gets sent:"));
   console.log(chalk.red("    ✗ prompts or responses"));

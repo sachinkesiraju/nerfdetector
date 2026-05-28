@@ -1,5 +1,140 @@
 import chalk from "chalk";
-import { getDb, getBaseline, getEventsInRange } from "./store/db.js";
+import { getDb, getBaseline, getEventsInRange, getEventsForSession, type EventRow } from "./store/db.js";
+import { buildFingerprint } from "./fingerprint.js";
+import { normalizeModelId } from "./models.js";
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtAgo(ms: number): string {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+}
+
+/**
+ * Resolve a partial session ID prefix to the full ID by querying the DB.
+ * Returns the full ID, or null if no match / multiple matches.
+ */
+function resolveSessionId(prefix: string): string | null {
+  if (prefix.length < 4) return null;
+  const db = getDb();
+  const matches = db.prepare(
+    `SELECT DISTINCT session_id FROM events WHERE session_id LIKE ? LIMIT 2`
+  ).all(prefix + "%") as Array<{ session_id: string }>;
+  if (matches.length === 1) return matches[0].session_id;
+  // Maybe full match
+  const full = db.prepare(`SELECT 1 FROM events WHERE session_id = ? LIMIT 1`).get(prefix);
+  return full ? prefix : null;
+}
+
+export function printSessionDetail(idOrPrefix: string) {
+  const sessionId = resolveSessionId(idOrPrefix);
+  if (!sessionId) {
+    console.log("");
+    console.log(chalk.yellow(`  ⚠ no session matching '${idOrPrefix}'`));
+    console.log(chalk.gray("  try `nerfdetector history` to list recent sessions"));
+    console.log("");
+    return;
+  }
+
+  const events = getEventsForSession(sessionId);
+  if (events.length === 0) {
+    console.log("");
+    console.log(chalk.yellow(`  ⚠ no events for session ${sessionId}`));
+    console.log("");
+    return;
+  }
+
+  // Pick primary model
+  const modelCounts = new Map<string, number>();
+  for (const e of events) {
+    if (e.event_type !== "tool_use") continue;
+    const m = normalizeModelId(e.model);
+    if (m === "unknown") continue;
+    modelCounts.set(m, (modelCounts.get(m) ?? 0) + 1);
+  }
+  let primary = "";
+  let best = 0;
+  for (const [m, n] of modelCounts) if (n > best) { best = n; primary = m; }
+
+  const fp = buildFingerprint(events);
+  const started = Math.min(...events.map((e) => e.ts));
+  const ended = Math.max(...events.map((e) => e.ts));
+  const durationS = Math.max(0, Math.round((ended - started) / 1000));
+
+  // Vote, if any
+  const voteRow = events.find((e) => e.event_type === "vote");
+  const voteLabel = !voteRow ? chalk.gray("(no vote)")
+    : voteRow.status === "1" ? chalk.green("🟢 fine")
+    : voteRow.status === "0" ? chalk.yellow("🟡 mid")
+    : chalk.red("🔴 nerfed");
+
+  console.log("");
+  console.log(chalk.bold(`  session ${sessionId.slice(0, 8)}`) +
+    chalk.gray(` · ${new Date(started).toLocaleString()} · ${Math.round(durationS / 60)} min`));
+  console.log(chalk.gray("  ─────────────────────────────────────────"));
+  console.log("");
+  console.log(`  ${primary || "unknown"} (100%)`);
+  console.log(`  vote: ${voteLabel}`);
+  console.log("");
+
+  // Score
+  console.log(chalk.gray("  score:"));
+  console.log(`    actions          ${fp.toolCallCount}`);
+  console.log(`    success rate    ${(Math.round((1 - fp.toolFailRate) * 100))}%${devStr(fp.deviationFromBaseline.successRate, "pct", "up")}`);
+  console.log(`    retry rate      ${(Math.round(fp.retryRate * 100))}%${devStr(fp.deviationFromBaseline.retryRate, "pct", "down")}`);
+  if (fp.deviationFromBaseline.latency != null) {
+    console.log(`    latency dev    ${(fp.deviationFromBaseline.latency >= 0 ? "+" : "")}${fp.deviationFromBaseline.latency.toFixed(1)}s vs norm`);
+  }
+  console.log(`    loops            ${fp.loops}`);
+  console.log(`    resteers         ${fp.resteers}`);
+  if (fp.topFailingTool) {
+    const fails = events.filter((e) => e.tool_ok === 0).length;
+    console.log(`    top fail tool   ${fp.topFailingTool} (${fails} failure${fails === 1 ? "" : "s"})`);
+  }
+  console.log("");
+
+  // Timeline (clip if huge)
+  console.log(chalk.gray("  timeline:"));
+  const MAX = 40;
+  const toShow = events.length > MAX
+    ? [...events.slice(0, MAX / 2), null, ...events.slice(events.length - MAX / 2)]
+    : events;
+  for (const e of toShow) {
+    if (e == null) { console.log(chalk.gray("    ...")); continue; }
+    const t = fmtTime(e.ts);
+    if (e.event_type === "prompt") {
+      console.log(chalk.gray(`    ${t}  prompt`));
+    } else if (e.event_type === "tool_use") {
+      const ok = e.tool_ok === 1 ? chalk.green("ok") : e.tool_ok === 0 ? chalk.red("fail") : chalk.gray("?");
+      const dur = e.duration_ms != null ? `${(e.duration_ms / 1000).toFixed(1)}s` : "";
+      console.log(`    ${chalk.gray(t)}  ${(e.tool_name ?? "").padEnd(10)} ${ok.padEnd(6)} ${chalk.gray(dur)}`);
+    } else if (e.event_type === "vote") {
+      const lbl = e.status === "1" ? chalk.green("🟢 vote: fine")
+                : e.status === "0" ? chalk.yellow("🟡 vote: mid")
+                : chalk.red("🔴 vote: nerfed");
+      console.log(`    ${chalk.gray(t)}  ${lbl}`);
+    }
+  }
+  console.log("");
+}
+
+function devStr(n: number | null, unit: "pct" | "s", goodDir: "up" | "down"): string {
+  if (n == null) return "";
+  if (Math.abs(n) < 0.005) return chalk.gray("   (norm)");
+  const isGood = (goodDir === "up" && n > 0) || (goodDir === "down" && n < 0);
+  const color = isGood ? chalk.green : chalk.red;
+  const body = unit === "pct"
+    ? `${n > 0 ? "+" : ""}${Math.round(n * 100)}pts`
+    : `${n > 0 ? "+" : ""}${n.toFixed(1)}s`;
+  return "  " + color(body) + chalk.gray(" vs 7-day norm");
+}
 
 function bar(pct: number, width: number = 16): string {
   const filled = Math.round((pct / 100) * width);

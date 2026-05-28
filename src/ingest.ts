@@ -2,6 +2,8 @@ import chalk from "chalk";
 import { insertEvent, getRecentEvents } from "./store/db.js";
 import { normalizeModelId, type StatusTier } from "./models.js";
 import { fetchGlobalStatus } from "./vote.js";
+import { readModelFromTranscript } from "./transcript.js";
+import { logDebug, logError } from "./log.js";
 
 const MAX_INPUT_SIZE = 65536;
 const STDIN_TIMEOUT_MS = 5000;
@@ -13,14 +15,43 @@ function tierEmoji(tier: StatusTier): string {
 
 export async function ingest(tool: string) {
   const input = await readStdin();
-  if (!input.trim()) return;
+  if (!input.trim()) {
+    logDebug("ingest", "empty stdin", { tool });
+    return;
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(input);
+  } catch (err) {
+    logError("ingest.parse", err, { tool, len: input.length });
+    return;
+  }
 
   try {
-    const data = JSON.parse(input);
     const hookEvent = data.hook_event_name;
+    logDebug("ingest", "hook fired", { tool, hookEvent, keys: Object.keys(data) });
 
-    const raw = data.model || data.modelId || process.env.CLAUDE_MODEL || "";
-    if (!raw) return;
+    let raw =
+      data.model ||
+      data.modelId ||
+      process.env.CLAUDE_MODEL ||
+      "";
+
+    if (!raw && data.transcript_path) {
+      const fromTranscript = readModelFromTranscript(data.transcript_path);
+      if (fromTranscript) {
+        raw = fromTranscript;
+        logDebug("ingest", "model from transcript", { model: raw });
+      }
+    }
+
+    if (!raw) {
+      logError("ingest.no-model", "no model id available", {
+        tool, hookEvent, hasTranscript: !!data.transcript_path,
+      });
+      return;
+    }
     const model = normalizeModelId(raw);
 
     const sessionId: string | undefined = data.session_id;
@@ -31,7 +62,7 @@ export async function ingest(tool: string) {
         showSessionStartStatus(model).catch(() => {});
       }
 
-      insertEvent(tool, model, "prompt", { sessionId });
+      insertEvent(tool, model, "prompt", { sessionId, source: "hook" });
       return;
     }
 
@@ -52,9 +83,10 @@ export async function ingest(tool: string) {
 
     insertEvent(tool, model, "tool_use", {
       durationMs, status, toolOk, toolName, responseSize, sessionId,
+      source: "hook",
     });
-  } catch {
-    // Silent
+  } catch (err) {
+    logError("ingest.handle", err, { tool });
   }
 }
 

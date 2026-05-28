@@ -1,6 +1,6 @@
 # nerfdetector
 
-[![npm](https://img.shields.io/npm/v/nerfdetector)](https://www.npmjs.com/package/nerfdetector)
+[npm](https://www.npmjs.com/package/nerfdetector)
 
 nerfdetector monitors real-time model performance. Is your model nerfed?
 
@@ -24,14 +24,14 @@ nerfdetector
 nerfdetector · Claude Opus 4.6: 🔴 12% sentiment · 40 reports
 ```
 
-3. After meaningful work, one line appears:
+1. After meaningful work, one line appears:
 
 ```
 nerfdetector · claude-opus-4-6 (100%) · 23 actions · 4 failed · 3 retries
 how was your session? [f] fine  [m] mid  [n] nerfed  [s] skip
 ```
 
-4. Press one key. Done.
+1. Press one key. Done.
 
 - **f** — sends your vote as "fine"
 - **m** — sends your vote as "mid" (worked but mediocre)
@@ -44,14 +44,49 @@ Your vote is weighted by which models you actually used — if you used Opus and
 
 ```
 nerfdetector              detect tools + install hooks (same as init)
-nerfdetector init         detect tools + install hooks
+nerfdetector init         detect tools + install hooks (--backfill 7d default, --no-backfill to skip)
 nerfdetector help         show help
 nerfdetector status       your session + global model status
-nerfdetector history      your personal trends (--days 7 or --days 30)
+nerfdetector doctor       verify hooks are firing + event pipeline is healthy
+nerfdetector inspect      preview the fingerprint that would be sent on vote
+nerfdetector history      your personal trends (--days 7) or --session <id> to drill in
+nerfdetector compare      scorecard diff between two sessions: compare <a> <b>
 nerfdetector report       vote on your session (--fine, --mid, or --nerfed)
 nerfdetector export       dump local events as JSON (privacy audit)
 nerfdetector uninstall    remove all hooks
 ```
+
+## Evidence-backed votes (new in v0.2)
+
+When you vote `nerfed`, nerfdetector can attach a redacted **fingerprint** so the crowd dashboard shows the *shape* of bad days, not just the count:
+
+```json
+{
+  "schemaVersion": 1,
+  "sessionDurationS": 2820,
+  "toolCallCount": 31,
+  "loops": 2,
+  "resteers": 1,
+  "toolFailRate": 0.23,
+  "retryRate": 0.16,
+  "topFailingTool": "Edit",
+  "deviationFromBaseline": {
+    "successRate": -0.22,
+    "retryRate": 0.12,
+    "latency": 3.4
+  },
+  "clientVersion": "0.2.0"
+}
+```
+
+- Built-in tool names (Bash, Edit, Read, etc.) pass through as-is. **Custom or MCP tool names are hashed** so they can't deanonymize you.
+- First time you vote, you'll see the exact JSON inline and be asked `[y]es / [s]kip fingerprint`. Your choice is remembered.
+- Run `nerfdetector inspect` anytime to preview what would be sent.
+- Per-session opt-out: `NERFDETECTOR_NO_FINGERPRINT=1`.
+
+## Debugging
+
+If hooks aren't capturing events, run `nerfdetector doctor`. It checks every link in the chain (hooks installed, events flowing, log permissions, schema version). For verbose hook tracing set `NERFDETECTOR_DEBUG=1` and look at `~/.nerfdetector/ingest.log` (mode 0600, structural-only — never logs prompt/tool content).
 
 ## What it tracks
 
@@ -93,11 +128,13 @@ Baselines and history never leave your machine.
 ## What gets collected
 
 **Sent when you vote:**
+
 - Which models you used
 - How many actions succeeded or failed
 - How often the model retried
 
 **Never sent:**
+
 - Prompts or responses
 - File paths or code
 - Error messages or tool output content
@@ -108,11 +145,13 @@ All events are stored locally in `~/.nerfdetector/events.db`. Run `nerfdetector 
 
 ## Supported tools
 
-| Tool | Status |
-|---|---|
+
+| Tool        | Status       |
+| ----------- | ------------ |
 | Claude Code | Full support |
-| Codex CLI | Full support |
-| Gemini CLI | Full support |
+| Codex CLI   | Full support |
+| Gemini CLI  | Full support |
+
 
 ## Uninstall
 

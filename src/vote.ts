@@ -123,7 +123,11 @@ export function computeAttribution(events?: EventRow[]): VoteContext {
   };
 }
 
-export async function submitVote(direction: 1 | 0 | -1, context?: VoteContext): Promise<{ ok: boolean; error?: string }> {
+export async function submitVote(
+  direction: 1 | 0 | -1,
+  context?: VoteContext,
+  fingerprint?: import("./analysis/score.js").Fingerprint | null,
+): Promise<{ ok: boolean; error?: string }> {
   const ctx = context ?? computeAttribution();
 
   if (!ctx.hasEvents || Object.keys(ctx.attribution).length === 0) {
@@ -140,6 +144,7 @@ export async function submitVote(direction: 1 | 0 | -1, context?: VoteContext): 
         direction,
         attribution: ctx.attribution,
         sessionMeta: ctx.sessionMeta,
+        fingerprint: fingerprint ?? undefined,
         source: "agent",
         deviceId,
       }),

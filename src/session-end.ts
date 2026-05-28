@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { getRecentEvents, getDataDir, getBaseline, upsertBaseline, insertEvent } from "./store/db.js";
 import { computeAttribution, submitVote, getApiBase } from "./vote.js";
 import { getDeviceId } from "./device.js";
+import { buildFingerprint, fingerprintConsent, recordFingerprintConsent } from "./fingerprint.js";
+import type { Fingerprint } from "./analysis/score.js";
 
 const MIN_ACTIONS = 5;
 const COOLDOWN_MS = 15 * 60 * 1000;
@@ -64,6 +66,12 @@ export async function handleSessionEnd() {
     statsStr += ` · ${meta.retriesTotal} retries`;
   }
 
+  // Loops / resteers (computed once, shared with the fingerprint later)
+  const previewFp = buildFingerprint(events);
+  if (previewFp.loops > 0) {
+    statsStr += ` · ${previewFp.loops} loop${previewFp.loops > 1 ? "s" : ""}`;
+  }
+
   console.log("");
   console.log(chalk.gray(`  nerfdetector · ${entries} · ${statsStr}`));
 
@@ -82,14 +90,33 @@ export async function handleSessionEnd() {
     const label = key === "f" ? chalk.green("✓ fine") : key === "m" ? chalk.yellow("✓ mid") : chalk.red("✓ nerfed");
     setLastPromptedAt();
 
-    // Store vote locally for history
+    // Compute fingerprint and run consent gate
+    const fp = buildFingerprint(events);
+    const consent = fingerprintConsent();
+    let sendFingerprint: Fingerprint | null = null;
+    if (consent === "send") {
+      sendFingerprint = fp;
+    } else if (consent === "ask") {
+      const accepted = await askFingerprintConsent(fp);
+      if (accepted) {
+        sendFingerprint = fp;
+        recordFingerprintConsent("send");
+      } else {
+        recordFingerprintConsent("skip");
+      }
+    }
+
+    // Store vote locally for history (including fingerprint we'd send)
     const primaryModel = Object.entries(context.attribution).sort((a, b) => b[1] - a[1])[0]?.[0];
     if (primaryModel) {
-      insertEvent("local", primaryModel, "vote", { status: String(direction) });
+      insertEvent("local", primaryModel, "vote", {
+        status: String(direction),
+        fingerprint: sendFingerprint ? JSON.stringify(sendFingerprint) : undefined,
+      });
     }
 
     try {
-      const result = await submitVote(direction as 1 | 0 | -1, context);
+      const result = await submitVote(direction as 1 | 0 | -1, context, sendFingerprint);
       console.log(result.ok ? label : chalk.red(`✗ ${result.error}`));
     } catch { console.log(chalk.red("✗ network error")); }
   } else {
@@ -176,7 +203,12 @@ function updateBaselines(context: import("./vote.js").VoteContext) {
     .sort((a, b) => b[1] - a[1])[0]?.[0];
   if (!primaryModel) return;
 
-  const tuCount = getRecentEvents().filter((e) => e.event_type === "tool_use").length;
+  // Idempotency: only LIVE hook events feed the EMA. Backfilled events get scored
+  // but never shift baselines, so re-running `init --backfill` is safe.
+  const liveToolEvents = getRecentEvents().filter(
+    (e) => e.event_type === "tool_use" && (e.source === "hook" || e.source == null),
+  );
+  const tuCount = liveToolEvents.length;
   if (tuCount >= 3) {
     const failRate = (meta.toolFailCount ?? 0) / tuCount;
     upsertBaseline(primaryModel, "success_rate", 1 - failRate);
@@ -190,6 +222,40 @@ function updateBaselines(context: import("./vote.js").VoteContext) {
     const retryRate = tuCount > 0 ? meta.retriesTotal / tuCount : 0;
     upsertBaseline(primaryModel, "retry_rate", retryRate);
   }
+
+  // Latency p50 baseline (new in v0.2)
+  const durations = liveToolEvents
+    .map((e) => e.duration_ms)
+    .filter((d): d is number => d != null && d > 0)
+    .sort((a, b) => a - b);
+  if (durations.length >= 3) {
+    const mid = Math.floor(durations.length / 2);
+    const p50ms = durations.length % 2 === 0
+      ? (durations[mid - 1] + durations[mid]) / 2
+      : durations[mid];
+    upsertBaseline(primaryModel, "latency_p50_s", p50ms / 1000);
+  }
+}
+
+// ── Consent gate ───────────────────────────────────
+
+async function askFingerprintConsent(fp: Fingerprint): Promise<boolean> {
+  console.log("");
+  console.log(chalk.gray("  one-time confirmation — your vote will attach this evidence:"));
+  console.log("");
+  for (const line of JSON.stringify(fp, null, 2).split("\n")) {
+    console.log(chalk.gray("  " + line));
+  }
+  console.log("");
+  console.log(chalk.gray("  no prompts, file paths, or content — see `nerfdetector inspect` anytime"));
+  process.stdout.write(
+    chalk.gray("  send fingerprint with this and future votes? ") +
+    chalk.green("[y]") + " yes  " +
+    chalk.gray("[s]") + " skip fingerprint  "
+  );
+  const ch = await readKeyFromTty(8000);
+  console.log("");
+  return ch === "y";
 }
 
 // ── TTY keypress ──────────────────────────────────
