@@ -121,6 +121,10 @@ function scanFile(src: Source, path: string): number {
       sessionId: e.sessionId,
       source: "backfill",
       sourceOffset: e.sourceOffset,
+      inputTokens: e.inputTokens,
+      outputTokens: e.outputTokens,
+      cacheReadTokens: e.cacheReadTokens,
+      toolInputHash: e.toolInputHash,
     });
     if (id != null) inserted++;
   }

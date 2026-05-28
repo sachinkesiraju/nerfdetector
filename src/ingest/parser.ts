@@ -1,3 +1,16 @@
+import { createHash } from "node:crypto";
+
+function hashToolInput(input: unknown): string | undefined {
+  if (input == null) return undefined;
+  try {
+    const s = JSON.stringify(input);
+    if (!s || s.length < 2) return undefined;
+    return createHash("sha256").update(s).digest("hex").slice(0, 16);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * JSONL transcript parsers. Pure functions — no I/O.
  *
@@ -12,7 +25,7 @@
 
 export interface ParsedEvent {
   ts: number;
-  eventType: "tool_use" | "prompt";
+  eventType: "tool_use" | "prompt" | "turn";
   toolName?: string;
   toolOk?: boolean;
   durationMs?: number;
@@ -20,6 +33,10 @@ export interface ParsedEvent {
   sessionId: string;
   model: string;
   sourceOffset: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  toolInputHash?: string;
 }
 
 export interface ParseResult {
@@ -45,7 +62,7 @@ export interface ParseResult {
  */
 export function parseClaudeCodeChunk(chunk: Buffer, startOffset: number): ParseResult {
   const events: ParsedEvent[] = [];
-  const pending = new Map<string, { ts: number; name: string; sessionId: string; model: string; offset: number }>();
+  const pending = new Map<string, { ts: number; name: string; sessionId: string; model: string; offset: number; toolInputHash?: string }>();
   let lastModel: string | null = null;
   let lastSessionId: string | null = null;
 
@@ -75,12 +92,33 @@ export function parseClaudeCodeChunk(chunk: Buffer, startOffset: number): ParseR
     if (rec.type === "assistant" && rec.message) {
       const model: string | null = typeof rec.message.model === "string" ? rec.message.model : null;
       if (model) lastModel = model;
+
+      // Emit one 'turn' event per assistant message with token usage
+      const usage = rec.message.usage;
+      if (usage && model && typeof usage === "object") {
+        // Uncached input = raw input + cache_creation (paid input both ways)
+        const inputTokens =
+          (typeof usage.input_tokens === "number" ? usage.input_tokens : 0) +
+          (typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0);
+        const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+        const cacheReadTokens = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
+        if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+          events.push({
+            ts, eventType: "turn",
+            sessionId, model,
+            inputTokens, outputTokens, cacheReadTokens,
+            sourceOffset: absoluteOffset,
+          });
+        }
+      }
+
       const content = rec.message.content;
       if (Array.isArray(content) && model) {
         for (const block of content) {
           if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
             pending.set(block.id, {
               ts, name: block.name, sessionId, model, offset: absoluteOffset,
+              toolInputHash: hashToolInput(block.input),
             });
           }
         }
@@ -113,6 +151,7 @@ export function parseClaudeCodeChunk(chunk: Buffer, startOffset: number): ParseR
               sessionId: start.sessionId,
               model: start.model,
               sourceOffset: start.offset,
+              toolInputHash: start.toolInputHash,
             });
             pending.delete(block.tool_use_id);
           }

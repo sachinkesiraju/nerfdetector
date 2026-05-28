@@ -1,9 +1,21 @@
 import chalk from "chalk";
+import { createHash } from "node:crypto";
 import { insertEvent, getRecentEvents } from "./store/db.js";
 import { normalizeModelId, type StatusTier } from "./models.js";
 import { fetchGlobalStatus } from "./vote.js";
 import { readModelFromTranscript } from "./transcript.js";
 import { logDebug, logError } from "./log.js";
+
+function hashToolInput(input: unknown): string | undefined {
+  if (input == null) return undefined;
+  try {
+    const s = JSON.stringify(input);
+    if (!s || s.length < 2) return undefined;
+    return createHash("sha256").update(s).digest("hex").slice(0, 16);
+  } catch {
+    return undefined;
+  }
+}
 
 const MAX_INPUT_SIZE = 65536;
 const STDIN_TIMEOUT_MS = 5000;
@@ -81,8 +93,11 @@ export async function ingest(tool: string) {
     const toolOk = toolName ? (data.success !== false && data.error == null) : undefined;
     const durationMs: number | undefined = data.duration_ms ?? data.durationMs ?? undefined;
 
+    const toolInputHash = hashToolInput(data.tool_input ?? data.toolInput);
+
     insertEvent(tool, model, "tool_use", {
       durationMs, status, toolOk, toolName, responseSize, sessionId,
+      toolInputHash,
       source: "hook",
     });
   } catch (err) {

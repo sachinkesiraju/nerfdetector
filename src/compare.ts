@@ -168,9 +168,22 @@ export function runCompare(idA: string, idB: string) {
                        deltaInt(a.fp.loops, b.fp.loops, "down")),
     row("resteers",     String(a.fp.resteers), String(b.fp.resteers),
                        deltaInt(a.fp.resteers, b.fp.resteers, "down")),
+    row("wasted calls", String(a.fp.wastedCalls), String(b.fp.wastedCalls),
+                       deltaInt(a.fp.wastedCalls, b.fp.wastedCalls, "down")),
     row("top fail tool", a.fp.topFailingTool ?? "—", b.fp.topFailingTool ?? "—", chalk.gray("·")),
-    row("vote",         stripAnsi(fmtVote(a.vote)), stripAnsi(fmtVote(b.vote)), chalk.gray("·")),
   ];
+  // Token rows (only if either side has data)
+  if (a.fp.tokens.input + b.fp.tokens.input > 0 || a.fp.tokens.output + b.fp.tokens.output > 0) {
+    rows.push(
+      row("input tokens",  fmtTok(a.fp.tokens.input),  fmtTok(b.fp.tokens.input),
+                           deltaInt(a.fp.tokens.input, b.fp.tokens.input, "down")),
+      row("output tokens", fmtTok(a.fp.tokens.output), fmtTok(b.fp.tokens.output),
+                           deltaInt(a.fp.tokens.output, b.fp.tokens.output, "down")),
+      row("cache hit",     pct(a.fp.tokens.cacheHitRate), pct(b.fp.tokens.cacheHitRate),
+                           deltaPct(a.fp.tokens.cacheHitRate, b.fp.tokens.cacheHitRate, "up")),
+    );
+  }
+  rows.push(row("vote", stripAnsi(fmtVote(a.vote)), stripAnsi(fmtVote(b.vote)), chalk.gray("·")));
   for (const r of rows) {
     console.log(`  ${r.label.padEnd(18)}${r.a.padStart(colW)}${r.b.padStart(colW)}${r.delta.padStart(colW + ansiPad(r.delta))}`);
   }
@@ -191,6 +204,12 @@ export function runCompare(idA: string, idB: string) {
 
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
+}
+
+function fmtTok(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 // ── Lightweight ANSI helpers (don't pull a dep) ─────────

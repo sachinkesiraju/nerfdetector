@@ -25,6 +25,10 @@ function ev(o: Partial<EventRow> & { ts: number }): EventRow {
     source: o.source ?? "hook",
     source_offset: o.source_offset ?? null,
     fingerprint: o.fingerprint ?? null,
+    input_tokens: o.input_tokens ?? null,
+    output_tokens: o.output_tokens ?? null,
+    cache_read_tokens: o.cache_read_tokens ?? null,
+    tool_input_hash: o.tool_input_hash ?? null,
   };
 }
 
@@ -128,6 +132,46 @@ const custom = scoreSession({
 });
 const isHashed = custom.topFailingTool?.startsWith("custom_") ?? false;
 eq("top failing tool hashed", isHashed, true);
+
+console.log("\nscoreSession — wasted calls (duplicates)");
+const wasted = scoreSession({
+  events: [
+    ev({ ts: 1_000_000, tool_name: "Read", tool_input_hash: "abc123", tool_ok: 1 }),
+    ev({ ts: 1_001_000, tool_name: "Read", tool_input_hash: "abc123", tool_ok: 1 }),  // waste #1
+    ev({ ts: 1_002_000, tool_name: "Read", tool_input_hash: "abc123", tool_ok: 1 }),  // waste #2
+    ev({ ts: 1_003_000, tool_name: "Read", tool_input_hash: "def456", tool_ok: 1 }),  // distinct, not waste
+    ev({ ts: 1_004_000, tool_name: "Grep", tool_input_hash: "abc123", tool_ok: 1 }),  // same hash, different tool, not waste
+  ],
+  clientVersion: "0.2.0",
+});
+eq("wastedCalls = 2", wasted.wastedCalls, 2);
+
+console.log("\nscoreSession — wastedCalls ignores events with no hash");
+const nohash = scoreSession({
+  events: [
+    ev({ ts: 1_000_000, tool_name: "Read", tool_ok: 1 }),
+    ev({ ts: 1_001_000, tool_name: "Read", tool_ok: 1 }),
+  ],
+  clientVersion: "0.2.0",
+});
+eq("no hash → no waste", nohash.wastedCalls, 0);
+
+console.log("\nscoreSession — token rollup");
+const tokens = scoreSession({
+  events: [
+    ev({ ts: 1_000_000, event_type: "turn", input_tokens: 100, output_tokens: 200, cache_read_tokens: 50 }),
+    ev({ ts: 1_001_000, event_type: "turn", input_tokens: 200, output_tokens: 400, cache_read_tokens: 150 }),
+    ev({ ts: 1_002_000, tool_name: "Bash", tool_ok: 1 }),
+  ],
+  clientVersion: "0.2.0",
+});
+eq("input tokens summed", tokens.tokens.input, 300);
+eq("output tokens summed", tokens.tokens.output, 600);
+eq("cache read summed", tokens.tokens.cacheRead, 200);
+eq("cache hit rate", tokens.tokens.cacheHitRate, round3(200 / 500));
+
+console.log("\nscoreSession — schema version is 2");
+eq("schemaVersion bumped", tokens.schemaVersion, 2);
 
 console.log("");
 console.log(`${passed} passed · ${failed} failed`);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EventRow } from "../store/db.js";
 
-export const FINGERPRINT_SCHEMA_VERSION = 1;
+export const FINGERPRINT_SCHEMA_VERSION = 2;
 
 // Built-in tool name allowlist. Anything outside this set is treated as
 // custom/MCP and hashed to prevent deanonymization via unique tool names.
@@ -27,6 +27,16 @@ export interface DeviationFromBaseline {
   latency: number | null;
 }
 
+export interface TokenUsage {
+  /** Uncached input tokens (raw + cache_creation). */
+  input: number;
+  output: number;
+  /** Cache reads. */
+  cacheRead: number;
+  /** cacheRead / (input + cacheRead) — 0 if no input at all. */
+  cacheHitRate: number;
+}
+
 export interface Fingerprint {
   schemaVersion: typeof FINGERPRINT_SCHEMA_VERSION;
   sessionDurationS: number;
@@ -35,7 +45,11 @@ export interface Fingerprint {
   resteers: number;
   toolFailRate: number;
   retryRate: number;
+  /** Duplicate (toolName, toolInputHash) calls within the session. Each
+   * repeated occurrence past the first counts as one wasted call. */
+  wastedCalls: number;
   topFailingTool: string | null;
+  tokens: TokenUsage;
   deviationFromBaseline: DeviationFromBaseline;
   clientVersion: string;
 }
@@ -75,6 +89,7 @@ export function scoreSession(input: ScoreInput): Fingerprint {
   const sorted = [...input.events].sort((a, b) => a.ts - b.ts);
   const toolEvents = sorted.filter((e) => e.event_type === "tool_use");
   const promptEvents = sorted.filter((e) => e.event_type === "prompt");
+  const turnEvents = sorted.filter((e) => e.event_type === "turn");
   const toolCallCount = toolEvents.length;
 
   // Duration: first event → last event, clamp to ≥0
@@ -155,6 +170,30 @@ export function scoreSession(input: ScoreInput): Fingerprint {
       : null,
   };
 
+  // Context-waste: count duplicate (toolName, toolInputHash) calls.
+  // Each occurrence past the first in a (name, hash) bucket = +1 wasted.
+  let wastedCalls = 0;
+  const callBuckets = new Map<string, number>();
+  for (const e of toolEvents) {
+    if (!e.tool_name || !e.tool_input_hash) continue;
+    const k = `${e.tool_name}|${e.tool_input_hash}`;
+    const seen = callBuckets.get(k) ?? 0;
+    if (seen >= 1) wastedCalls++;
+    callBuckets.set(k, seen + 1);
+  }
+
+  // Token usage: sum across all turn events
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  for (const t of turnEvents) {
+    inputTokens += t.input_tokens ?? 0;
+    outputTokens += t.output_tokens ?? 0;
+    cacheReadTokens += t.cache_read_tokens ?? 0;
+  }
+  const totalInput = inputTokens + cacheReadTokens;
+  const cacheHitRate = totalInput > 0 ? round3(cacheReadTokens / totalInput) : 0;
+
   return {
     schemaVersion: FINGERPRINT_SCHEMA_VERSION,
     sessionDurationS,
@@ -163,7 +202,14 @@ export function scoreSession(input: ScoreInput): Fingerprint {
     resteers,
     toolFailRate,
     retryRate,
+    wastedCalls,
     topFailingTool,
+    tokens: {
+      input: inputTokens,
+      output: outputTokens,
+      cacheRead: cacheReadTokens,
+      cacheHitRate,
+    },
     deviationFromBaseline,
     clientVersion: input.clientVersion,
   };

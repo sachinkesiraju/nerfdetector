@@ -15,6 +15,12 @@ function fmtPct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
+function fmtTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
 function fmtDelta(n: number | null, unit: "pct" | "s" | "x", goodDirection: "up" | "down"): string {
   if (n == null) return chalk.gray("—");
   const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "·";
@@ -55,8 +61,17 @@ export function runInspect() {
   console.log(`  retries        ${Math.round(fp.retryRate * fp.toolCallCount)} (${fmtPct(fp.retryRate)})`);
   console.log(`  loops          ${fp.loops}`);
   console.log(`  resteers       ${fp.resteers}`);
+  console.log(`  wasted calls   ${fp.wastedCalls}` + (fp.wastedCalls > 0 ? chalk.gray(`  (duplicate tool calls)`) : ""));
   if (fp.topFailingTool) {
     console.log(`  top fail tool  ${fp.topFailingTool}`);
+  }
+
+  // Token usage (when available — backfilled sessions have it; live hooks don't yet)
+  if (fp.tokens.input > 0 || fp.tokens.output > 0) {
+    console.log("");
+    console.log(`  input tokens   ${fmtTokens(fp.tokens.input)}`);
+    console.log(`  output tokens  ${fmtTokens(fp.tokens.output)}`);
+    console.log(`  cache read     ${fmtTokens(fp.tokens.cacheRead)}` + chalk.gray(`  (${fmtPct(fp.tokens.cacheHitRate)} cache hit rate)`));
   }
   console.log("");
 

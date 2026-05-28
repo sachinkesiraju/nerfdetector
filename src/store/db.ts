@@ -64,6 +64,13 @@ const MIGRATIONS: string[][] = [
        updated_at INTEGER NOT NULL
      )`,
   ],
+  // v5 — token usage + tool_input hash (for context-waste detection)
+  [
+    `ALTER TABLE events ADD COLUMN input_tokens INTEGER`,
+    `ALTER TABLE events ADD COLUMN output_tokens INTEGER`,
+    `ALTER TABLE events ADD COLUMN cache_read_tokens INTEGER`,
+    `ALTER TABLE events ADD COLUMN tool_input_hash TEXT`,
+  ],
 ];
 
 const CURRENT_VERSION = MIGRATIONS.length;
@@ -151,6 +158,10 @@ export interface EventRow {
   source: string | null;
   source_offset: number | null;
   fingerprint: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  tool_input_hash: string | null;
 }
 
 const VALID_TOOLS = new Set(["claude-code", "codex", "gemini", "local"]);
@@ -171,6 +182,10 @@ export function insertEvent(
     sourceOffset?: number;
     fingerprint?: string;
     ts?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    toolInputHash?: string;
   }
 ): number | null {
   if (!VALID_TOOLS.has(tool)) return null;
@@ -184,8 +199,9 @@ export function insertEvent(
     const r = db.prepare(
       `INSERT INTO events
          (ts, tool, model, event_type, duration_ms, status, tool_ok, tool_name,
-          response_size, session_id, source, source_offset, fingerprint)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          response_size, session_id, source, source_offset, fingerprint,
+          input_tokens, output_tokens, cache_read_tokens, tool_input_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       o.ts ?? Date.now(), tool, model, eventType,
       o.durationMs ?? null,
@@ -197,6 +213,10 @@ export function insertEvent(
       source,
       o.sourceOffset ?? null,
       o.fingerprint ?? null,
+      o.inputTokens ?? null,
+      o.outputTokens ?? null,
+      o.cacheReadTokens ?? null,
+      o.toolInputHash ?? null,
     );
     return Number(r.lastInsertRowid);
   } catch (err: any) {
