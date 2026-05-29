@@ -4,7 +4,7 @@
 
 nerfdetector monitors real-time model performance. Is your model nerfed?
 
-When Claude, GPT, Gemini, or Grok is having a bad day, you shouldn't have to wonder if it's just you. nerfdetector watches your AI coding sessions and lets you report how it's going — one keypress at the end of every session.
+When Claude, GPT, Gemini, Grok, or Devin is having a bad day, you shouldn't have to wonder if it's just you. nerfdetector watches your AI coding sessions and lets you report how it's going — one keypress at the end of every session.
 
 ## Install
 
@@ -21,7 +21,7 @@ nerfdetector
 2. At session start, you see how your model is doing globally:
 
 ```
-nerfdetector · Claude Opus 4.6: 🔴 12% sentiment · 40 reports
+nerfdetector · Claude Opus 4.6: 🔴 ▅▄▃▂▂▂▂▂ 12% · 40 reports
 ```
 
 1. After meaningful work, one line appears:
@@ -40,6 +40,20 @@ how was your session? [f] fine  [m] mid  [n] nerfed  [s] skip
 
 Your vote is weighted by which models you actually used — if you used Opus and Sonnet in the same session, the vote counts proportionally against each. 
 
+Anytime, run `nerfdetector status` for the full board — each model's last 6 hours of crowd sentiment as a trend sparkline, sorted worst-first:
+
+```
+$ nerfdetector status
+
+  global  ·  6-hour sentiment trend
+  ────────────────────────────────────────────────────────
+  🔴 Claude Opus 4.6    ▅▄▃▂▂▂▂▂▂▂▂▂  12% · 41% health · 40 reports
+  🟡 Gemini 3.1 Pro     ▅▅▅▄▅▅▄▅▅▅▅▅  51% · 60% health · 22 reports
+  🟢 Claude Opus 4.7    ▆▆▇▇▇▇▇▇▇▇▇▇  88% · 91% health · 25 reports
+```
+
+The sparkline is colored by tier (red/yellow/green) so a model sliding into a bad day is obvious before you even read the number.
+
 ## Commands
 
 ```
@@ -56,33 +70,38 @@ nerfdetector export       dump local events as JSON (privacy audit)
 nerfdetector uninstall    remove all hooks
 ```
 
-## Evidence-backed votes (new in v0.2)
+## In-session analytics (new in v0.2)
 
-When you vote `nerfed`, nerfdetector can attach a redacted **fingerprint** so the crowd dashboard shows the *shape* of bad days, not just the count:
+Run `nerfdetector inspect` anytime to see how the current session is going — including **token usage**, with a cache-hit gauge that shows how much context is being reprocessed vs. served from cache:
 
-```json
-{
-  "schemaVersion": 1,
-  "sessionDurationS": 2820,
-  "toolCallCount": 31,
-  "loops": 2,
-  "resteers": 1,
-  "toolFailRate": 0.23,
-  "retryRate": 0.16,
-  "topFailingTool": "Edit",
-  "deviationFromBaseline": {
-    "successRate": -0.22,
-    "retryRate": 0.12,
-    "latency": 3.4
-  },
-  "clientVersion": "0.2.0"
-}
+```
+$ nerfdetector inspect
+
+  current session — claude-opus-4-6 (100%)
+  ─────────────────────────────────────────
+
+  duration       47m
+  tool calls     31
+  failures       7 (23%)
+  retries        5 (16%)
+  loops          2
+  resteers       1
+  wasted calls   4  (duplicate tool calls)
+  top fail tool  Edit
+
+  token usage · 359.2k in → 12.9k out
+    cache hit  █████████████████░░░  87%
+    context     359.2k   48.2k new · 311.0k cached
+
+  vs your 7-day norm:
+    success rate   ▼ -22pts
+    retry rate     ▲ +12pts
+    latency        ▲ +3.4s
 ```
 
-- Built-in tool names (Bash, Edit, Read, etc.) pass through as-is. **Custom or MCP tool names are hashed** so they can't deanonymize you.
-- First time you vote, you'll see the exact JSON inline and be asked `[y]es / [s]kip fingerprint`. Your choice is remembered.
-- Run `nerfdetector inspect` anytime to preview what would be sent.
-- Per-session opt-out: `NERFDETECTOR_NO_FINGERPRINT=1`.
+- The **cache hit** gauge turns green when most input is cache-served and red when the model is re-reading context it already had — a strong tell for a slow, expensive session.
+- **context** breaks the total input into *new* tokens vs *cached* ones; **wasted calls** counts duplicate `(tool, input)` calls that burn context.
+- Token usage is read from your transcript's per-turn counts — **no prompt or response content** is ever read. The same block appears in `nerfdetector history --session <id>`.
 
 ## Debugging
 
@@ -95,6 +114,8 @@ nerfdetector tracks quality signals from your sessions and builds a personal bas
 - **Tool success rate** — how many actions succeeded vs failed
 - **Retry loops** — consecutive same-tool calls (model stuck in a loop)
 - **Latency** — time between actions (is the model getting slower?)
+- **Wasted calls** — duplicate tool calls with identical inputs (context burned re-fetching the same thing)
+- **Token usage** — input/output/cache-read totals and cache hit rate, from per-turn transcript usage
 
 To check if a session deviates significantly from your norm, you can run `nerfdetector history` to view a summary of your usage.
 
@@ -131,7 +152,8 @@ Baselines and history never leave your machine.
 
 - Which models you used
 - How many actions succeeded or failed
-- How often the model retried
+- How often the model retried or repeated identical calls
+- Aggregate token counts and cache hit rate (no content)
 
 **Never sent:**
 
@@ -141,7 +163,7 @@ Baselines and history never leave your machine.
 - Personally identifying information
 - Your personal baselines
 
-All events are stored locally in `~/.nerfdetector/events.db`. Run `nerfdetector export` anytime to verify.
+All events are stored locally in `~/.nerfdetector/events.db`. Run `nerfdetector export` anytime to verify, or `nerfdetector inspect` to preview exactly what a vote would send. To never attach session metrics to a vote, set `NERFDETECTOR_NO_FINGERPRINT=1`.
 
 ## Supported tools
 

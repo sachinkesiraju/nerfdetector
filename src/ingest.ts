@@ -5,6 +5,7 @@ import { normalizeModelId, type StatusTier } from "./models.js";
 import { fetchGlobalStatus } from "./vote.js";
 import { readModelFromTranscript } from "./transcript.js";
 import { logDebug, logError } from "./log.js";
+import { sparkline, tierColor } from "./viz.js";
 
 function hashToolInput(input: unknown): string | undefined {
   if (input == null) return undefined;
@@ -120,8 +121,10 @@ async function showSessionStartStatus(model: string) {
     if (total === 0) {
       console.log(chalk.gray(`  nerfdetector · ${m.displayName}: ⚪ no data yet`));
     } else {
-      const pct = m.sentimentScore !== null ? `${Math.round(m.sentimentScore * 100)}% sentiment` : "";
-      console.log(chalk.gray(`  nerfdetector · ${m.displayName}: ${tierEmoji(m.tier)} ${pct} · ${total} reports`));
+      const pct = m.sentimentScore !== null ? `${Math.round(m.sentimentScore * 100)}%` : "";
+      const spark = sparkline(m.sparkline, 8);
+      const trend = spark ? tierColor(m.tier)(spark) + " " : "";
+      console.log(chalk.gray(`  nerfdetector · ${m.displayName}: ${tierEmoji(m.tier)} ${trend}${chalk.gray(pct + " · " + total + " reports")}`));
     }
   } catch {}
 }
