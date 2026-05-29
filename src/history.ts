@@ -2,6 +2,7 @@ import chalk from "chalk";
 import { getDb, getBaseline, getEventsInRange, getEventsForSession, type EventRow } from "./store/db.js";
 import { buildFingerprint } from "./fingerprint.js";
 import { normalizeModelId } from "./models.js";
+import { renderTokens } from "./viz.js";
 
 function fmtTime(ms: number): string {
   const d = new Date(ms);
@@ -99,11 +100,7 @@ export function printSessionDetail(idOrPrefix: string) {
     const fails = events.filter((e) => e.tool_ok === 0).length;
     console.log(`    top fail tool   ${fp.topFailingTool} (${fails} failure${fails === 1 ? "" : "s"})`);
   }
-  if (fp.tokens.input > 0 || fp.tokens.output > 0) {
-    console.log(`    input tokens   ${fmtTokensH(fp.tokens.input)}`);
-    console.log(`    output tokens  ${fmtTokensH(fp.tokens.output)}`);
-    console.log(`    cache hit rate  ${Math.round(fp.tokens.cacheHitRate * 100)}%`);
-  }
+  for (const ln of renderTokens(fp.tokens, "    ")) console.log(ln);
   console.log("");
 
   // Timeline (clip if huge)
@@ -129,12 +126,6 @@ export function printSessionDetail(idOrPrefix: string) {
     }
   }
   console.log("");
-}
-
-function fmtTokensH(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 function devStr(n: number | null, unit: "pct" | "s", goodDir: "up" | "down"): string {

@@ -3,6 +3,7 @@ import { getRecentEvents, getBaseline } from "./store/db.js";
 import { computeAttribution } from "./vote.js";
 import { buildFingerprint, fingerprintConsent } from "./fingerprint.js";
 import { normalizeModelId } from "./models.js";
+import { renderTokens } from "./viz.js";
 
 function fmtDuration(s: number): string {
   if (s < 60) return `${s}s`;
@@ -13,12 +14,6 @@ function fmtDuration(s: number): string {
 
 function fmtPct(n: number): string {
   return `${Math.round(n * 100)}%`;
-}
-
-function fmtTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 function fmtDelta(n: number | null, unit: "pct" | "s" | "x", goodDirection: "up" | "down"): string {
@@ -67,11 +62,10 @@ export function runInspect() {
   }
 
   // Token usage (when available — backfilled sessions have it; live hooks don't yet)
-  if (fp.tokens.input > 0 || fp.tokens.output > 0) {
+  const tokenLines = renderTokens(fp.tokens);
+  if (tokenLines.length > 0) {
     console.log("");
-    console.log(`  input tokens   ${fmtTokens(fp.tokens.input)}`);
-    console.log(`  output tokens  ${fmtTokens(fp.tokens.output)}`);
-    console.log(`  cache read     ${fmtTokens(fp.tokens.cacheRead)}` + chalk.gray(`  (${fmtPct(fp.tokens.cacheHitRate)} cache hit rate)`));
+    for (const ln of tokenLines) console.log(ln);
   }
   console.log("");
 

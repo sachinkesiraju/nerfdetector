@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { computeAttribution, fetchGlobalStatus } from "./vote.js";
 import type { ModelStatus, StatusTier } from "./models.js";
+import { sparkline, tierColor } from "./viz.js";
 
 function tierEmoji(tier: StatusTier): string {
   switch (tier) {
@@ -42,8 +43,8 @@ export async function printStatus() {
   }
 
   console.log("");
-  console.log(chalk.bold("  global"));
-  console.log(chalk.gray("  ──────────────────────────"));
+  console.log(chalk.bold("  global") + chalk.gray("  ·  6-hour sentiment trend"));
+  console.log(chalk.gray("  ────────────────────────────────────────────────────────"));
 
   const data = await fetchGlobalStatus();
   if (!data?.models) {
@@ -60,10 +61,12 @@ export async function printStatus() {
   for (const m of sorted) {
     const emoji = tierEmoji(m.tier);
     const name = m.displayName.slice(0, 20).padEnd(20);
+    const sparkStr = sparkline(m.sparkline);
+    const spark = sparkStr ? tierColor(m.tier)(sparkStr) : chalk.gray("·".repeat(12));
     const sent = pct(m.sentimentScore).padStart(4);
     const health = pct(m.healthScore).padStart(4);
-    const sessions = String(m.voteCount + m.sessionCount).padStart(4);
-    console.log(`  ${emoji} ${name}  ${sent} sentiment · ${health} telemetry · ${sessions} sessions`);
+    const reports = String(m.voteCount + m.sessionCount).padStart(3);
+    console.log(`  ${emoji} ${name} ${spark} ${sent} ${chalk.gray(`· ${health} health · ${reports} reports`)}`);
   }
 
   console.log("");
